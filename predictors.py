@@ -3,8 +3,9 @@ import numpy as np
 import keras.backend as K
 from copy import deepcopy
 from tqdm import tqdm
+from collections import deque
 from sklearn.model_selection import train_test_split
-from keras.models import Model
+from keras.models import Model, load_model
 from keras.layers import Input, Dense, Conv1D, Add, Flatten
 from keras.optimizers import Adam
 from keras.callbacks import TensorBoard, CSVLogger, ModelCheckpoint
@@ -71,6 +72,11 @@ class NeuralNetwork(Predictor):
         raise NotImplementedError
         
         
+    def load(self, filename):
+        """ Load a previously trained model """                
+        self.model = load_model(filename)
+        
+        
     def _preprocess(self, y_true):
         """ Preprocess data into rolling window slices """
         X = np.zeros((len(y_true)-self.history, self.history), dtype='uint8')
@@ -91,8 +97,7 @@ class NeuralNetwork(Predictor):
 
         # Preprocess data
         X_train, X_test, y_train, y_test = self._preprocess(deepcopy(y_true))
-        print('X_train shape: {}, X_test shape {}'.format(X_train.shape, X_test.shape))
-
+        
         # Setup Log directory
         if not os.path.exists(os.path.join('logs', self.name)):
             os.mkdir(os.path.join('logs', self.name))
@@ -114,10 +119,22 @@ class NeuralNetwork(Predictor):
                             epochs=epochs, batch_size=batch_size, callbacks=callbacks)
 
 
+    def predict(self, y_true):
+        """ Predict on test set """
+        
+        # Preprocess data
+        _, X_test, _, y_test = self._preprocess(deepcopy(y_true))
+        
+        y_pred = self.model.predict(X_test).squeeze().round().astype(int)
+        
+        return list(y_pred), list(y_test)
+        
+        
 class Static(Predictor):
     """
     Static Branch Predictor
     Predicts always taken or not taken
+
     """
 
     def __init__(self, always_taken):
@@ -171,17 +188,17 @@ class NbitCounter(Predictor):
 class Bimodal(Predictor):
     """ Bimodal Branch Predictor """
 
-    def __init__(self, m, n_bits):
+    def __init__(self, k, n):
         
-        self.m, self.n_bits = m, n_bits
-        self.name = 'Bimodal {}-bit Counter'.format(str(self.n))
+        self.k, self.n = k, n
+        self.name = 'Bimodal ({}, {})'.format(str(self.k), str(self.n))
         
         # Counters
-        self.states = states[self.n_bits].copy()
-        self.init_state = 'T' if self.n_bits == 1 else 'ST'
+        self.states = states[self.n].copy()
+        self.init_state = 'T' if self.n == 1 else 'ST'
 
         # Pattern History Table of Counters
-        self.ph_table = {i: self.init_state for i in range(self.m)}
+        self.ph_table = {i: self.init_state for i in range(int(2**self.k))}
 
 
     def predict(self, y_true, pc):
@@ -192,7 +209,7 @@ class Bimodal(Predictor):
         for i, (pc, branch) in tqdm(enumerate(zip(pc, y_true))):
             
             # Calculate the index of the N-bit counter to use in the table = PC % m
-            index = pc % self.m
+            index = pc % self.k
             
             # Predict taken/not taken
             y_pred[i] = self.states[self.ph_table[index]]['prediction']
@@ -209,28 +226,28 @@ class Bimodal(Predictor):
 class Correlation(Predictor):
     """ Correlation Branch Predictor """
 
-    def __init__(self, m, n_bits):
+    def __init__(self, k, n):
         
-        self.m, self.n_bits = m, n_bits
-        self.name = 'Correlation {}-bit Counter'.format(str(self.n_bits))
+        self.k, self.n = k, n
+        self.name = 'Correlation ({}, {})'.format(str(k), str(self.n))
         
         # Counters
-        self.states = states[self.n_bits].copy()
-        self.init_state = 'T' if self.n_bits == 1 else 'ST'
+        self.states = states[self.n].copy()
+        self.init_state = 'T' if self.n == 1 else 'ST'
 
         # Pattern History Table of Counters
-        self.ph_table = {i: self.init_state for i in range(self.m)}
+        self.ph_table = {i: self.init_state for i in range(int(2 ** self.k))}
 
         # Branch History Register (initialized to 0's)
-        self.bhr = deque(['0'] * m, maxlen=self.m)
+        self.bhr = deque(['0'] * self.k, maxlen=self.k)
 
 
-    def predict(self, y_true, pc):
+    def predict(self, y_true):
         
         # Pre allocate
         y_pred = [None] * len(y_true)
         
-        for i, (pc, branch) in tqdm(enumerate(zip(pc, y_true))):
+        for i, branch in tqdm(enumerate(y_true)):
             
             # Calculate the index of the N-bit counter to use in the table = PC % m
             index = int(''.join(self.bhr), 2)
@@ -250,34 +267,35 @@ class Correlation(Predictor):
         return y_pred
 
 
-class GShare(Predictor):
-    """ GShare Branch Predictor """
-    
-    def __init__(self, history, m, n, n_bits):
+class Gshare(Predictor):
+    """ Gshare Branch Predictor """
+
+    def __init__(self, k, n):
         
-        self.history, self.m, self.n, self.n_bits = history, m, n, n_bits
-        self.name = 'GShare ({}, {}) {}-bit Counter'.format(str(self.m), str(self.n), str(self.n_bits))
+        self.k, self.n = k, n
+        self.name = 'Gshare ({}, {})'.format(str(k), str(self.n))
         
         # Counters
-        self.states = states[self.n_bits].copy()
-        self.init_state = 'T' if self.n_bits == 1 else 'ST'
+        self.states = states[self.n].copy()
+        self.init_state = 'T' if self.n == 1 else 'ST'
 
         # Pattern History Table of Counters
-        self.ph_table = {i: self.init_state for i in range(self.m)}
+        self.ph_table = {i: self.init_state for i in range(int(2 ** self.k))}
 
         # Branch History Register (initialized to 0's)
-        self.bhr = deque(['0'] * m, maxlen=self.m)
+        self.bhr = deque(['0'] * self.k, maxlen=self.k)
 
 
     def predict(self, y_true, pc):
         
-        # Pre allocate 
+        # Pre allocate
         y_pred = [None] * len(y_true)
         
         for i, (pc, branch) in tqdm(enumerate(zip(pc, y_true))):
             
-            # Calculate the index of the N-bit counter to use in the table = PC % m
-            index = pc % self.m
+            # Calculate the index of the N-bit counter to use in the table
+            # Index = branch history XOR last k bits of PC
+            index = (int(''.join(self.bhr), 2)) ^ (pc & (int(2 ** self.k)-1))
             
             # Predict taken/not taken
             y_pred[i] = self.states[self.ph_table[index]]['prediction']
@@ -287,10 +305,10 @@ class GShare(Predictor):
             
             # Update the state
             self.ph_table[index] = self.states[self.ph_table[index]]['transition'][hit]
-            
+
             # Update the bhr
             self.bhr.extend('1' if hit else '0')
-
+        
         return y_pred
     
     
@@ -340,10 +358,6 @@ class Perceptron(NeuralNetwork):
         model = Model(inputs, outputs)
         model.compile(optimizer=Adam(lr=1E-3), loss='binary_crossentropy')
         return model
-        
-    
-    def predict(self, y_true):
-        pass
 
 
 class CNN(NeuralNetwork):
@@ -417,7 +431,3 @@ class CNN(NeuralNetwork):
         model = Model(inputs, outputs)
         model.compile(optimizer=Adam(), loss='binary_crossentropy')
         return model
-        
-    
-    def predict(self, y_true):
-        pass

@@ -1,10 +1,12 @@
 import numpy as np
 import pandas as pd
+import matplotlib
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 from sklearn.utils.multiclass import unique_labels
 
+matplotlib.rcParams.update({'font.size': 12})
 
 def read_data(filename='trace.csv'):
 
@@ -43,7 +45,7 @@ def parse_trace(filename='gcc-10M.trace'):
     f_out.close()
 
 
-def evaluate(y_true, y_pred, name='', normalize=False):
+def evaluate(y_true, y_pred, name='', plot=False, normalize=False):
     """ Compute metrics between predicted and true labels """
 
     acc = accuracy_score(y_true, y_pred)
@@ -55,8 +57,10 @@ def evaluate(y_true, y_pred, name='', normalize=False):
             'Recall':np.float16(rec),
             'F1-Score': np.float16(f1)
             }
-    plot_confusion_matrix(y_true, y_pred, classes=['Not Taken', 'Taken'],
-                          normalize=normalize, title=name + ' Predictor')
+    
+    if plot:
+        plot_confusion_matrix(y_true, y_pred, classes=['Not Taken', 'Taken'],
+                              normalize=normalize, title=name + ' Predictor')
     
     return metrics
 
@@ -82,7 +86,7 @@ def plot_confusion_matrix(y_true, y_pred, classes,
 
     fig, ax = plt.subplots()
     im = ax.imshow(cm, interpolation='nearest', cmap=cmap)
-    ax.figure.colorbar(im, ax=ax)
+    #ax.figure.colorbar(im, ax=ax)
     # We want to show all ticks...
     ax.set(xticks=np.arange(cm.shape[1]),
            yticks=np.arange(cm.shape[0]),
