@@ -209,7 +209,7 @@ class Bimodal(Predictor):
         for i, (pc, branch) in tqdm(enumerate(zip(pc, y_true))):
             
             # Calculate the index of the N-bit counter to use in the table = PC % m
-            index = pc % self.k
+            index = pc & (int(2**self.k) - 1) 
             
             # Predict taken/not taken
             y_pred[i] = self.states[self.ph_table[index]]['prediction']
